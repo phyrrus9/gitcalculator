@@ -1,0 +1,6 @@
+Simple github calculator. feed it the usernames (space separated) and it will barf out the code counts
+
+Bugs:
+	Does not work with organizations
+Cons:
+	Takes a long time for a user's github like say me (phyrrus9)
