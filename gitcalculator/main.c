@@ -13,7 +13,7 @@
 
 //in finding repositories, look for this:
 /*
- <h3 class="repolist-name">
+ <h3 class="repo-list-name">
  <a href="/USERNAME/REPO">REPO</a>
  </h3>
  */
@@ -37,7 +37,7 @@ int count_repositories(char *username)
 	sprintf(cmdbuf, "curl -s https://github.com/%s?tab=repositories", username);
 	f = popen(cmdbuf, "r"); //run curl on the site to get the repo listing
 	while (fscanf(f, "%[^\n]\n", linebuf) != EOF)
-		if (strstr(linebuf, "<h3 class=\"repolist-name\">") != NULL)
+		if (strstr(linebuf, "<h3 class=\"repo-list-name\">") != NULL)
 			++count;
 	pclose(f);
 	return count;
@@ -51,13 +51,23 @@ void name_repositories(char *username, char * * list, int num)
 	sprintf(cmdbuf, "curl -s https://github.com/%s?tab=repositories", username);
 	f = popen(cmdbuf, "r"); //run curl on the site to get the repo listing
 	while (fscanf(f, "%[^\n]\n", linebuf) != EOF && i < num)
-		if (strstr(linebuf, "<h3 class=\"repolist-name\">") != NULL)
-			if (fscanf(f, "%[^\n]\n", linebuf) != EOF)
-				if ((ptr = strstr(linebuf, "\">")) != NULL)
-					if ((ptr += 2) || 1)
-						if ((tempbuf = strstr(ptr, "</a>")) || 1)
-							if ((*tempbuf = 0) || 1)
-								sprintf(list[i++], "%s/%s", username, ptr);
+	{
+		if (strstr(linebuf, "<h3 class=\"repo-list-name\">") != NULL)
+		{
+			if (fscanf(f, "%[^\n]\n", linebuf) != EOF) //read until the end of the line
+			{
+				if ((ptr = strstr(linebuf, "\">")) != NULL) //read the whole next line
+				{
+					if (fscanf(f, "%[^\n]\n", linebuf) != EOF) //something
+					{
+						ptr = strstr(linebuf, "</a>");
+						*ptr = 0;
+						sprintf(list[i++], "%s/%s", username, linebuf);
+					}
+				}
+			}
+		}
+	}
 	pclose(f);
 }
 
