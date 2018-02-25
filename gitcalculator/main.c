@@ -28,61 +28,43 @@ char * * double_alloc(int h, int w)
 	return ret;
 }
 
+
 int count_repositories(char *username)
 {
 	FILE *f;
-	int count = 0;
-	char cmdbuf[64];
+	int count = 0, lnum;
+	char cmdbuf[64], c;
 	char linebuf[4096]; //there should be SOME endlines
-	sprintf(cmdbuf, "curl -s https://github.com/%s?tab=repositories", username);
+	sprintf(cmdbuf, "curl -s https://github.com/%s | grep -n Repositories", username);
 	f = popen(cmdbuf, "r"); //run curl on the site to get the repo listing
-	while (fscanf(f, "%[^\n]\n", linebuf) != EOF)
-		if (strstr(linebuf, "<h3 class=\"repo-list-name\">") != NULL)
-			++count;
+	while (fscanf(f, "%d: %s", &lnum, linebuf) > 0)
+	{
+		//curl -s https://github.com/phyrrus9 | head -n 299 | tail -n 1
+		if (strstr(linebuf, "title") == NULL) break;
+	}
 	pclose(f);
+	sprintf(cmdbuf, "curl -s https://github.com/%s | head -n %d | tail -n 1", username, lnum + 2);
+	f = popen(cmdbuf, "r");
+	fscanf(f, "%s", linebuf); sscanf(linebuf, "%d", &count);
 	return count;
 }
 
-void name_repositories(char *username, char * * list, int num)
+int name_repositories(char *username, char * * list, int num, int page)
 {
 	int i = 0;
 	FILE *f;
-	char cmdbuf[1024], linebuf[4096], *tempbuf, *ptr;
-	sprintf(cmdbuf, "curl -s https://github.com/%s?tab=repositories", username);
+	char cmdbuf[1024], linebuf[4096], *tempbuf, *ptr, c;
+	sprintf(cmdbuf, "curl -s https://github.com/%s?page=%d\\&tab=repositories | grep /%s/", username, page+1, username);
 	f = popen(cmdbuf, "r"); //run curl on the site to get the repo listing
-	while (fscanf(f, "%[^\n]\n", linebuf) != EOF && i < num)
-	{
-		if (strstr(linebuf, "<h3 class=\"repo-list-name\">") != NULL)
+	while (fscanf(f, "%[^\n]%c", linebuf, &c) > 0 && i < num)
+		if (strstr(linebuf, "codeRepository") != NULL) // is a repo line
 		{
-			if (fscanf(f, "%[^\n]\n", linebuf) != EOF) //read until the end of the line
-			{
-				if ((ptr = strstr(linebuf, "\">")) != NULL) //read the whole next line
-				{
-					if (fscanf(f, "%[^\n]\n", linebuf) != EOF) //something
-					{
-						ptr = strstr(linebuf, "</a>");
-						*ptr = 0;
-						sprintf(list[i++], "%s/%s", username, linebuf);
-					}
-				}
-			}
+			ptr = strstr(linebuf, "href=") + 8 + strlen(username);
+			*strstr(ptr, "\"") = 0;
+			sprintf(list[i++], "%s/%s", username, ptr);
 		}
-	}
 	pclose(f);
-}
-
-void clone_repositories(char * * list, int num, char *base)
-{
-	int i;
-	char clonebuf[256];
-	printf("Cloning %d repositories, this can take a while..be patient\n", num);
-	for (i = 0; i < num; i++)
-	{
-		printf("-->%-3d: %s\n", i + 1, list[i]);
-		fflush(stdout);
-		sprintf(clonebuf, "git clone -q https://github.com/%s %s/%s", list[i], base, list[i]);
-		system(clonebuf);
-	}
+	return i;
 }
 
 int count_lines(char *username, char *base, int *charout)
@@ -100,12 +82,29 @@ int count_lines(char *username, char *base, int *charout)
 	return lines;
 }
 
+int clone_repositories(char * * list, int num, char *base, int offset)
+{
+	int i;
+	char clonebuf[256];
+	for (i = 0; i < num; i++)
+	{
+		printf("\r                                                       \r");
+		printf("--> %-3d\t : %s\n...   ", i + 1 + offset, list[i]); fflush(stdout);
+		fflush(stdout);
+		sprintf(clonebuf, "git clone -q https://github.com/%s %s/%s", list[i], base, list[i]);
+		system(clonebuf);
+	}
+	return i;
+}
+
 int main(int argc, char * * argv)
 {
-	char * * repositories, *username = "torvalds", *base = "/tmp/git2", cleancmd[64];
-	int i, count, j, lines, chars;
-	for (j = 1; j < argc; j++)
+	char * * repositories, *username = "torvalds", *base = "/tmp/git2", cleancmd[64], * *resultsbuf;
+	int i, count, j, lines, chars, reponum, named, page;
+	resultsbuf = malloc(sizeof(char *) * argc);
+	for (j = 1, reponum = 0; j < argc; j++)
 	{
+		named = page = lines = chars = 0;
 		username = argv[j];
 		count = count_repositories(username);
 		sprintf(cleancmd, "rm -rf %s/%s", base, username);
@@ -113,11 +112,21 @@ int main(int argc, char * * argv)
 		repositories = malloc(count * 9); //some pad
 		for (i = 0; i < count; i++)
 			repositories[i] = malloc(64);
-		name_repositories(username, repositories, count);
-		clone_repositories(repositories, count, base);
+		do { named += name_repositories(username, &repositories[named], count, page++); } while (named < count);
+		reponum += clone_repositories(repositories, count, base, reponum);
+		printf("\rCalculating -> %s", username); fflush(stdout);
 		lines = count_lines(username, base, &chars);
 		system(cleancmd);
-		printf("%-10s: Lines: %-9d\tCharacters: %-12d\n", username, lines, chars);
+		resultsbuf[j - 1] = malloc(256);
+		sprintf((char *)resultsbuf[j - 1], "\r                                     \r"
+						   "%-10s: Lines: %-9d\tCharacters: %-12d\n", username, lines, chars);
 	}
+	for (j = 1; j < argc; ++j)
+	{
+		printf(resultsbuf[j - 1]);
+		free(resultsbuf[j - 1]);
+	}
+	free(resultsbuf);
+	return 0;
 }
 
